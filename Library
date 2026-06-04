@@ -1,1 +1,940 @@
+--[[
+    UI Library "White Classic v9 - Public Release Edition"
+    
+    NEW FEATURES:
+    - AddSection(TabName, SectionTitle)
+        → Adds a full-width section divider/header label inside a tab
+    
+    - AddButton(TabName, SectionOrNil, ButtonName, Color, InfoText, Callback)
+        → Color is a table: {R, G, B}  e.g. {40, 120, 255}
+        → SectionOrNil: pass a section name string to group under it, or nil for no group
+        → The left edge of the button glows with the chosen color
+        → Info dot also uses the button color
+    
+    USAGE EXAMPLE:
+        local UI = UILibrary:CreateWindow("My Hub")
 
+        UI:AddSection("Main", "Farming Tools")
+        UI:AddButton("Main", "Farming Tools", "Auto Farm", {40, 200, 100}, "Starts auto farm.", function()
+            print("Auto Farm ON")
+        end)
+
+        UI:AddSection("Main", "Movement")
+        UI:AddButton("Main", "Movement", "Speed Hack", {255, 150, 40}, "Makes you run faster.", function()
+            game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = 50
+        end)
+
+        -- Button without a section:
+        UI:AddButton("Settings", nil, "Reset Stats", {200, 60, 60}, "Resets all stats.", function()
+            print("Reset!")
+        end)
+
+    HOST ON GITHUB:
+        Paste this file into your repo as library.lua
+        The last line must be: return UILibrary
+        Users load it with:
+            local UILibrary = loadstring(game:HttpGet("YOUR_RAW_URL"))()
+]]
+
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+
+local function copyToClipboard(str)
+    local success = pcall(function()
+        if setclipboard then setclipboard(str)
+        elseif toclipboard then toclipboard(str)
+        else print("Clipboard (Studio): " .. str) end
+    end)
+    if not success then warn("Gagal menyalin ke clipboard.") end
+end
+
+local UILibrary = {}
+
+function UILibrary:CreateWindow(TitleText)
+    local connections = {}
+
+    local Window = {
+        Tabs = {},
+        CurrentTab = nil,
+        ToggleKey = Enum.KeyCode.M,
+        IsMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled,
+        IsBinding = false
+    }
+
+    if CoreGui:FindFirstChild("ClassicWhiteUI") then
+        CoreGui.ClassicWhiteUI:Destroy()
+    end
+
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "ClassicWhiteUI"
+    ScreenGui.ResetOnSpawn = false
+    local ok = pcall(function() ScreenGui.Parent = CoreGui end)
+    if not ok then ScreenGui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui") end
+
+    -- Auto-cleanup if ScreenGui is destroyed externally
+    ScreenGui.Destroying:Connect(function()
+        for _, c in pairs(connections) do
+            if typeof(c) == "RBXScriptConnection" then c:Disconnect() end
+        end
+        table.clear(connections)
+    end)
+
+    -- ==========================================
+    -- MAIN FRAME
+    -- ==========================================
+    local mainOpenSize  = UDim2.new(0, 570, 0, 400)
+    local mainClosedSize = UDim2.new(0, 570, 0, 0)
+
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Name = "MainFrame"
+    MainFrame.Size = mainOpenSize
+    MainFrame.Position = UDim2.new(0.5, -285, 0.5, -200)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    MainFrame.BorderSizePixel = 0
+    MainFrame.ClipsDescendants = false
+    MainFrame.Parent = ScreenGui
+    Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 12)
+
+    -- Drop shadow
+    local DropShadow = Instance.new("ImageLabel")
+    DropShadow.AnchorPoint = Vector2.new(0.5, 0.5)
+    DropShadow.BackgroundTransparency = 1
+    DropShadow.Position = UDim2.new(0.5, 0, 0.5, 8)
+    DropShadow.Size = UDim2.new(1, 70, 1, 70)
+    DropShadow.Image = "rbxassetid://6015897043"
+    DropShadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+    DropShadow.ImageTransparency = 0.42
+    DropShadow.SliceCenter = Rect.new(49, 49, 450, 450)
+    DropShadow.ScaleType = Enum.ScaleType.Slice
+    DropShadow.ZIndex = -1
+    DropShadow.Parent = MainFrame
+
+    -- Subtle gradient background
+    local UIGradient = Instance.new("UIGradient")
+    UIGradient.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(241, 241, 246))
+    }
+    UIGradient.Rotation = 50
+    UIGradient.Parent = MainFrame
+
+    local UIScale = Instance.new("UIScale")
+    UIScale.Scale = 1
+    UIScale.Parent = MainFrame
+
+    if workspace.CurrentCamera.ViewportSize.X < 800 then
+        UIScale.Scale = 0.8
+        Window.IsMobile = true
+    end
+
+    -- Clipping wrapper
+    local ContentWrapper = Instance.new("Frame")
+    ContentWrapper.Size = UDim2.new(1, 0, 1, 0)
+    ContentWrapper.BackgroundTransparency = 1
+    ContentWrapper.ClipsDescendants = true
+    ContentWrapper.Parent = MainFrame
+    Instance.new("UICorner", ContentWrapper).CornerRadius = UDim.new(0, 12)
+
+    -- ==========================================
+    -- TOP BAR
+    -- ==========================================
+    local TopBar = Instance.new("Frame")
+    TopBar.Size = UDim2.new(1, 0, 0, 42)
+    TopBar.BackgroundTransparency = 1
+    TopBar.Parent = ContentWrapper
+
+    -- Thin accent line under title
+    local TitleAccent = Instance.new("Frame")
+    TitleAccent.Size = UDim2.new(1, 0, 0, 1)
+    TitleAccent.Position = UDim2.new(0, 0, 1, -1)
+    TitleAccent.BackgroundColor3 = Color3.fromRGB(225, 225, 230)
+    TitleAccent.BorderSizePixel = 0
+    TitleAccent.Parent = TopBar
+
+    local TitleLabel = Instance.new("TextLabel")
+    TitleLabel.Size = UDim2.new(1, -100, 1, 0)
+    TitleLabel.Position = UDim2.new(0, 16, 0, 0)
+    TitleLabel.BackgroundTransparency = 1
+    TitleLabel.Text = TitleText or "Script Hub"
+    TitleLabel.Font = Enum.Font.GothamBlack
+    TitleLabel.TextSize = 15
+    TitleLabel.TextColor3 = Color3.fromRGB(18, 18, 18)
+    TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    TitleLabel.Parent = TopBar
+
+    local ControlContainer = Instance.new("Frame")
+    ControlContainer.Size = UDim2.new(0, 80, 1, 0)
+    ControlContainer.Position = UDim2.new(1, -85, 0, 0)
+    ControlContainer.BackgroundTransparency = 1
+    ControlContainer.Parent = TopBar
+
+    local function MakeControlBtn(text, color, xPos)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0, 34, 0, 30)
+        btn.Position = UDim2.new(0, xPos, 0.5, -15)
+        btn.BackgroundTransparency = 1
+        btn.Text = text
+        btn.Font = Enum.Font.GothamBold
+        btn.TextSize = 16
+        btn.TextColor3 = color
+        btn.Parent = ControlContainer
+        btn.MouseEnter:Connect(function()
+            TweenService:Create(btn, TweenInfo.new(0.15), {TextColor3 = Color3.fromRGB(10,10,10)}):Play()
+        end)
+        btn.MouseLeave:Connect(function()
+            TweenService:Create(btn, TweenInfo.new(0.15), {TextColor3 = color}):Play()
+        end)
+        return btn
+    end
+
+    local MinBtn   = MakeControlBtn("—", Color3.fromRGB(110, 110, 110), 0)
+    local CloseBtn = MakeControlBtn("✕", Color3.fromRGB(200, 55, 55), 40)
+
+    -- ==========================================
+    -- FLOATING BUTTON (MOBILE) — declared early
+    -- ==========================================
+    local FloatingBtn = Instance.new("ImageButton")
+    FloatingBtn.Size = UDim2.new(0, 52, 0, 52)
+    FloatingBtn.Position = UDim2.new(0.5, -26, 0, 22)
+    FloatingBtn.BackgroundColor3 = Color3.fromRGB(40, 120, 255)
+    FloatingBtn.Visible = false
+    FloatingBtn.Parent = ScreenGui
+    Instance.new("UICorner", FloatingBtn).CornerRadius = UDim.new(1, 0)
+
+    local FloatShadow = DropShadow:Clone()
+    FloatShadow.Size = UDim2.new(1, 28, 1, 28)
+    FloatShadow.Parent = FloatingBtn
+
+    local FloatIcon = Instance.new("TextLabel")
+    FloatIcon.Size = UDim2.new(1, 0, 1, 0)
+    FloatIcon.BackgroundTransparency = 1
+    FloatIcon.Text = "UI"
+    FloatIcon.Font = Enum.Font.GothamBlack
+    FloatIcon.TextSize = 18
+    FloatIcon.TextColor3 = Color3.fromRGB(255, 255, 255)
+    FloatIcon.Parent = FloatingBtn
+
+    -- ==========================================
+    -- DRAG STATES
+    -- ==========================================
+    local m_dragging, m_dragInput, m_dragStart, m_startPos
+    local f_dragging, f_dragInput, f_dragStart, f_startPos
+    local f_dragMoved = false
+
+    table.insert(connections, UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            m_dragging = false
+            f_dragging = false
+        end
+    end))
+
+    TopBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            m_dragging = true
+            m_dragStart = input.Position
+            m_startPos = MainFrame.Position
+        end
+    end)
+    TopBar.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+            m_dragInput = input
+        end
+    end)
+
+    FloatingBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            f_dragging = true
+            f_dragMoved = false
+            f_dragStart = input.Position
+            f_startPos = FloatingBtn.Position
+        end
+    end)
+    FloatingBtn.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+            f_dragInput = input
+        end
+    end)
+
+    table.insert(connections, UserInputService.InputChanged:Connect(function(input)
+        if input == m_dragInput and m_dragging then
+            local d = input.Position - m_dragStart
+            MainFrame.Position = UDim2.new(
+                m_startPos.X.Scale, m_startPos.X.Offset + d.X,
+                m_startPos.Y.Scale, m_startPos.Y.Offset + d.Y
+            )
+        elseif input == f_dragInput and f_dragging then
+            local d = input.Position - f_dragStart
+            if d.Magnitude > 5 then f_dragMoved = true end
+            FloatingBtn.Position = UDim2.new(
+                f_startPos.X.Scale, f_startPos.X.Offset + d.X,
+                f_startPos.Y.Scale, f_startPos.Y.Offset + d.Y
+            )
+        end
+    end))
+
+    FloatingBtn.MouseButton1Click:Connect(function()
+        if not f_dragMoved then
+            FloatingBtn.Visible = false
+            MainFrame.Visible = true
+            TweenService:Create(MainFrame, TweenInfo.new(0.22), {Size = mainOpenSize}):Play()
+        end
+    end)
+
+    -- ==========================================
+    -- WINDOW CONTROLS
+    -- ==========================================
+    CloseBtn.MouseButton1Click:Connect(function()
+        TweenService:Create(MainFrame, TweenInfo.new(0.2), {Size = mainClosedSize, BackgroundTransparency = 1}):Play()
+        task.delay(0.22, function() ScreenGui:Destroy() end)
+    end)
+
+    MinBtn.MouseButton1Click:Connect(function()
+        TweenService:Create(MainFrame, TweenInfo.new(0.2), {Size = mainClosedSize}):Play()
+        task.delay(0.22, function()
+            MainFrame.Visible = false
+            if Window.IsMobile then FloatingBtn.Visible = true end
+        end)
+    end)
+
+    -- ==========================================
+    -- KEYBIND (unified handler)
+    -- ==========================================
+    local BLOCKED_KEYS = {
+        [Enum.KeyCode.Escape]    = true,
+        [Enum.KeyCode.Return]    = true,
+        [Enum.KeyCode.Space]     = true,
+        [Enum.KeyCode.Backspace] = true,
+        [Enum.KeyCode.Unknown]   = true,
+    }
+
+    local KeybindBtn_ref -- forward reference, assigned in Settings tab
+
+    table.insert(connections, UserInputService.InputBegan:Connect(function(input, processed)
+        -- Priority: capture keybind
+        if Window.IsBinding and input.UserInputType == Enum.UserInputType.Keyboard then
+            if not BLOCKED_KEYS[input.KeyCode] then
+                Window.ToggleKey = input.KeyCode
+            end
+            if KeybindBtn_ref then
+                KeybindBtn_ref.Text = "Tombol: " .. Window.ToggleKey.Name
+            end
+            Window.IsBinding = false
+            return
+        end
+
+        -- Normal toggle
+        if processed then return end
+        if input.KeyCode == Window.ToggleKey then
+            if MainFrame.Visible then
+                TweenService:Create(MainFrame, TweenInfo.new(0.2), {Size = mainClosedSize}):Play()
+                task.delay(0.22, function() MainFrame.Visible = false end)
+            else
+                MainFrame.Visible = true
+                TweenService:Create(MainFrame, TweenInfo.new(0.2), {Size = mainOpenSize}):Play()
+                FloatingBtn.Visible = false
+            end
+        end
+    end))
+
+    -- ==========================================
+    -- SIDEBAR (proper clip, no patch hack)
+    -- ==========================================
+    local SidebarContainer = Instance.new("Frame")
+    SidebarContainer.Size = UDim2.new(0, 145, 1, -42)
+    SidebarContainer.Position = UDim2.new(0, 0, 0, 42)
+    SidebarContainer.BackgroundTransparency = 1
+    SidebarContainer.ClipsDescendants = true
+    SidebarContainer.Parent = ContentWrapper
+    Instance.new("UICorner", SidebarContainer).CornerRadius = UDim.new(0, 12)
+
+    local Sidebar = Instance.new("Frame")
+    Sidebar.Size = UDim2.new(1, 20, 1, 0) -- extended right to hide right corners
+    Sidebar.BackgroundColor3 = Color3.fromRGB(234, 234, 239)
+    Sidebar.BorderSizePixel = 0
+    Sidebar.Parent = SidebarContainer
+    Instance.new("UICorner", Sidebar).CornerRadius = UDim.new(0, 12)
+
+    -- Scrollable tab list (top section)
+    local TabContainer = Instance.new("ScrollingFrame")
+    TabContainer.Size = UDim2.new(0, 145, 1, -92)
+    TabContainer.Position = UDim2.new(0, 0, 0, 8)
+    TabContainer.BackgroundTransparency = 1
+    TabContainer.ScrollBarThickness = 2
+    TabContainer.ScrollBarImageColor3 = Color3.fromRGB(190, 190, 195)
+    TabContainer.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    TabContainer.CanvasSize = UDim2.new(0, 0, 0, 0)
+    TabContainer.Parent = SidebarContainer
+
+    local TabListLayout = Instance.new("UIListLayout")
+    TabListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    TabListLayout.Padding = UDim.new(0, 5)
+    TabListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    TabListLayout.Parent = TabContainer
+
+    -- Fixed bottom tab area (Generator, Settings)
+    local BottomTabContainer = Instance.new("Frame")
+    BottomTabContainer.Size = UDim2.new(0, 145, 0, 88)
+    BottomTabContainer.Position = UDim2.new(0, 0, 1, -90)
+    BottomTabContainer.BackgroundTransparency = 1
+    BottomTabContainer.Parent = SidebarContainer
+
+    -- Subtle separator above bottom tabs
+    local BottomSep = Instance.new("Frame")
+    BottomSep.Size = UDim2.new(0, 110, 0, 1)
+    BottomSep.Position = UDim2.new(0.5, -55, 0, 0)
+    BottomSep.BackgroundColor3 = Color3.fromRGB(210, 210, 215)
+    BottomSep.BorderSizePixel = 0
+    BottomSep.Parent = BottomTabContainer
+
+    local BottomTabList = Instance.new("UIListLayout")
+    BottomTabList.SortOrder = Enum.SortOrder.LayoutOrder
+    BottomTabList.Padding = UDim.new(0, 5)
+    BottomTabList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+    BottomTabList.VerticalAlignment = Enum.VerticalAlignment.Bottom
+    BottomTabList.Parent = BottomTabContainer
+
+    -- Vertical divider between sidebar and content
+    local Divider = Instance.new("Frame")
+    Divider.Size = UDim2.new(0, 1, 1, -42)
+    Divider.Position = UDim2.new(0, 145, 0, 42)
+    Divider.BackgroundColor3 = Color3.fromRGB(218, 218, 223)
+    Divider.BorderSizePixel = 0
+    Divider.Parent = ContentWrapper
+
+    -- Main content area
+    local ContentContainer = Instance.new("Frame")
+    ContentContainer.Size = UDim2.new(1, -146, 1, -42)
+    ContentContainer.Position = UDim2.new(0, 146, 0, 42)
+    ContentContainer.BackgroundTransparency = 1
+    ContentContainer.Parent = ContentWrapper
+
+    -- ==========================================
+    -- INFO MODAL
+    -- ==========================================
+    local InfoModal = Instance.new("Frame")
+    InfoModal.Size = UDim2.new(1, 0, 1, 0)
+    InfoModal.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    InfoModal.BackgroundTransparency = 1
+    InfoModal.ZIndex = 50
+    InfoModal.Visible = false
+    InfoModal.Parent = ContentWrapper
+
+    local InfoBox = Instance.new("Frame")
+    InfoBox.Size = UDim2.new(0, 290, 0, 148)
+    InfoBox.Position = UDim2.new(0.5, -145, 0.5, -74)
+    InfoBox.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    InfoBox.ZIndex = 51
+    InfoBox.Parent = InfoModal
+    Instance.new("UICorner", InfoBox).CornerRadius = UDim.new(0, 10)
+
+    local InfoBoxShadow = DropShadow:Clone()
+    InfoBoxShadow.ZIndex = 50
+    InfoBoxShadow.Parent = InfoBox
+
+    local InfoText = Instance.new("TextLabel")
+    InfoText.Size = UDim2.new(1, -30, 1, -52)
+    InfoText.Position = UDim2.new(0, 15, 0, 14)
+    InfoText.BackgroundTransparency = 1
+    InfoText.TextWrapped = true
+    InfoText.Font = Enum.Font.GothamMedium
+    InfoText.TextSize = 13
+    InfoText.TextColor3 = Color3.fromRGB(30, 30, 30)
+    InfoText.ZIndex = 52
+    InfoText.Parent = InfoBox
+
+    -- Color accent bar on top of InfoBox
+    local InfoAccent = Instance.new("Frame")
+    InfoAccent.Size = UDim2.new(1, 0, 0, 4)
+    InfoAccent.Position = UDim2.new(0, 0, 0, 0)
+    InfoAccent.BackgroundColor3 = Color3.fromRGB(40, 120, 255)
+    InfoAccent.BorderSizePixel = 0
+    InfoAccent.ZIndex = 53
+    InfoAccent.Parent = InfoBox
+
+    local InfoCloseBtn = Instance.new("TextButton")
+    InfoCloseBtn.Size = UDim2.new(0, 110, 0, 30)
+    InfoCloseBtn.Position = UDim2.new(0.5, -55, 1, -40)
+    InfoCloseBtn.BackgroundColor3 = Color3.fromRGB(40, 120, 255)
+    InfoCloseBtn.Text = "Mengerti"
+    InfoCloseBtn.Font = Enum.Font.GothamBold
+    InfoCloseBtn.TextSize = 13
+    InfoCloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    InfoCloseBtn.ZIndex = 52
+    InfoCloseBtn.Parent = InfoBox
+    Instance.new("UICorner", InfoCloseBtn).CornerRadius = UDim.new(0, 6)
+
+    InfoCloseBtn.MouseButton1Click:Connect(function()
+        InfoCloseBtn.Interactable = false
+        TweenService:Create(InfoModal, TweenInfo.new(0.18), {BackgroundTransparency = 1}):Play()
+        TweenService:Create(InfoBox, TweenInfo.new(0.18), {
+            Position = UDim2.new(0.5, -145, 0.5, -54),
+            BackgroundTransparency = 1
+        }):Play()
+        task.delay(0.2, function()
+            InfoModal.Visible = false
+            InfoCloseBtn.Interactable = true
+        end)
+    end)
+
+    function Window:ShowInfo(text, accentColor)
+        InfoText.Text = text
+        -- Update accent bar and button color to match button's color
+        local c = accentColor or Color3.fromRGB(40, 120, 255)
+        InfoAccent.BackgroundColor3 = c
+        InfoCloseBtn.BackgroundColor3 = c
+        InfoModal.Visible = true
+        InfoModal.BackgroundTransparency = 1
+        InfoBox.Position = UDim2.new(0.5, -145, 0.5, -94)
+        InfoBox.BackgroundTransparency = 0
+        TweenService:Create(InfoModal, TweenInfo.new(0.25), {BackgroundTransparency = 0.55}):Play()
+        TweenService:Create(InfoBox, TweenInfo.new(0.25), {Position = UDim2.new(0.5, -145, 0.5, -74)}):Play()
+    end
+
+    -- ==========================================
+    -- TAB SYSTEM
+    -- ==========================================
+    local tabOrderCounter = 0
+
+    local function CreateTabLogic(TabName, isBottomTab)
+        tabOrderCounter += 1
+
+        local TabBtn = Instance.new("TextButton")
+        TabBtn.Size = UDim2.new(0, 124, 0, 30)
+        TabBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        TabBtn.BackgroundTransparency = 1
+        TabBtn.Text = TabName
+        TabBtn.Font = Enum.Font.GothamBold
+        TabBtn.TextSize = 12
+        TabBtn.LayoutOrder = tabOrderCounter
+        TabBtn.TextColor3 = Color3.fromRGB(125, 125, 130)
+        TabBtn.Parent = isBottomTab and BottomTabContainer or TabContainer
+        Instance.new("UICorner", TabBtn).CornerRadius = UDim.new(0, 7)
+
+        -- Left indicator bar for active tab
+        local ActiveBar = Instance.new("Frame")
+        ActiveBar.Size = UDim2.new(0, 3, 0, 16)
+        ActiveBar.Position = UDim2.new(0, 5, 0.5, -8)
+        ActiveBar.BackgroundColor3 = Color3.fromRGB(40, 120, 255)
+        ActiveBar.BorderSizePixel = 0
+        ActiveBar.BackgroundTransparency = 1
+        ActiveBar.Parent = TabBtn
+        Instance.new("UICorner", ActiveBar).CornerRadius = UDim.new(1, 0)
+
+        -- Content scroll frame for this tab
+        local TabContent = Instance.new("ScrollingFrame")
+        TabContent.Size = UDim2.new(1, -18, 1, -18)
+        TabContent.Position = UDim2.new(0, 9, 0, 9)
+        TabContent.BackgroundTransparency = 1
+        TabContent.ScrollBarThickness = 2
+        TabContent.ScrollBarImageColor3 = Color3.fromRGB(200, 200, 205)
+        TabContent.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        TabContent.CanvasSize = UDim2.new(0, 0, 0, 0)
+        TabContent.Visible = false
+        TabContent.Parent = ContentContainer
+
+        local ContentLayout = Instance.new("UIListLayout")
+        ContentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        ContentLayout.Padding = UDim.new(0, 8)
+        ContentLayout.Parent = TabContent
+
+        local TabObj = {
+            Button = TabBtn,
+            ActiveBar = ActiveBar,
+            Content = TabContent,
+            Name = TabName,
+            ButtonCount = 0,
+            Sections = {} -- section name → last LayoutOrder used
+        }
+        Window.Tabs[TabName] = TabObj
+
+        TabBtn.MouseEnter:Connect(function()
+            if Window.CurrentTab ~= TabObj then
+                TweenService:Create(TabBtn, TweenInfo.new(0.15), {
+                    BackgroundTransparency = 0.6,
+                    TextColor3 = Color3.fromRGB(60, 60, 65)
+                }):Play()
+            end
+        end)
+        TabBtn.MouseLeave:Connect(function()
+            if Window.CurrentTab ~= TabObj then
+                TweenService:Create(TabBtn, TweenInfo.new(0.15), {
+                    BackgroundTransparency = 1,
+                    TextColor3 = Color3.fromRGB(125, 125, 130)
+                }):Play()
+            end
+        end)
+        TabBtn.MouseButton1Click:Connect(function() Window:SelectTab(TabName) end)
+        return TabObj
+    end
+
+    function Window:SelectTab(TabName)
+        if not self.Tabs[TabName] then return end
+        for _, tab in pairs(self.Tabs) do
+            tab.Content.Visible = false
+            TweenService:Create(tab.Button, TweenInfo.new(0.18), {
+                BackgroundTransparency = 1,
+                TextColor3 = Color3.fromRGB(125, 125, 130)
+            }):Play()
+            TweenService:Create(tab.ActiveBar, TweenInfo.new(0.18), {
+                BackgroundTransparency = 1
+            }):Play()
+        end
+        local sel = self.Tabs[TabName]
+        sel.Content.Visible = true
+        TweenService:Create(sel.Button, TweenInfo.new(0.18), {
+            BackgroundTransparency = 0,
+            TextColor3 = Color3.fromRGB(20, 20, 20)
+        }):Play()
+        TweenService:Create(sel.ActiveBar, TweenInfo.new(0.18), {
+            BackgroundTransparency = 0
+        }):Play()
+        self.CurrentTab = sel
+    end
+
+    -- ==========================================
+    -- AddSection
+    -- Adds a bold section header inside a tab
+    -- Usage: UI:AddSection("TabName", "Section Title")
+    -- ==========================================
+    function Window:AddSection(TabName, SectionTitle)
+        -- Auto-create tab if it doesn't exist
+        if not self.Tabs[TabName] then
+            CreateTabLogic(TabName, false)
+            if not self.CurrentTab then self:SelectTab(TabName) end
+        end
+
+        local tabObj = self.Tabs[TabName]
+        tabObj.ButtonCount += 1
+
+        -- Track this section's layout order start
+        tabObj.Sections[SectionTitle] = tabObj.ButtonCount
+
+        -- Container for section header row
+        local SectionFrame = Instance.new("Frame")
+        SectionFrame.Size = UDim2.new(1, 0, 0, 28)
+        SectionFrame.BackgroundTransparency = 1
+        SectionFrame.LayoutOrder = tabObj.ButtonCount
+        SectionFrame.Parent = tabObj.Content
+
+        -- Section label
+        local SectionLabel = Instance.new("TextLabel")
+        SectionLabel.Size = UDim2.new(1, -12, 1, 0)
+        SectionLabel.Position = UDim2.new(0, 6, 0, 0)
+        SectionLabel.BackgroundTransparency = 1
+        SectionLabel.Text = SectionTitle
+        SectionLabel.Font = Enum.Font.GothamBlack
+        SectionLabel.TextSize = 11
+        SectionLabel.TextColor3 = Color3.fromRGB(140, 140, 148)
+        SectionLabel.TextXAlignment = Enum.TextXAlignment.Left
+        SectionLabel.Parent = SectionFrame
+
+        -- Horizontal rule line to the right of the label
+        -- We create a thin line that fills the remainder of the row
+        local LineContainer = Instance.new("Frame")
+        LineContainer.Size = UDim2.new(1, -12, 0, 1)
+        LineContainer.Position = UDim2.new(0, 6, 0.5, 8)
+        LineContainer.BackgroundColor3 = Color3.fromRGB(225, 225, 230)
+        LineContainer.BorderSizePixel = 0
+        LineContainer.Parent = SectionFrame
+    end
+
+    -- ==========================================
+    -- AddButton (NEW SIGNATURE)
+    -- UI:AddButton(TabName, Section, ButtonName, Color, InfoText, Callback)
+    --   TabName    : string  — which tab this goes in
+    --   Section    : string or nil — section name (must match an AddSection call), or nil
+    --   ButtonName : string  — label on the button
+    --   Color      : table {R, G, B} — accent color for the left bar and info dot
+    --   InfoText   : string  — shown in the info modal
+    --   Callback   : function — called on click
+    -- ==========================================
+    function Window:AddButton(TabName, Section, ButtonName, Color, InfoText, Callback)
+        if not self.Tabs[TabName] then
+            CreateTabLogic(TabName, false)
+            if not self.CurrentTab then self:SelectTab(TabName) end
+        end
+
+        local tabObj = self.Tabs[TabName]
+        tabObj.ButtonCount += 1
+
+        -- Resolve accent color
+        local accentColor
+        if type(Color) == "table" then
+            accentColor = Color3.fromRGB(
+                math.clamp(Color[1] or 40,  0, 255),
+                math.clamp(Color[2] or 120, 0, 255),
+                math.clamp(Color[3] or 255, 0, 255)
+            )
+        else
+            accentColor = Color3.fromRGB(40, 120, 255) -- fallback
+        end
+
+        -- Outer frame
+        local BtnFrame = Instance.new("Frame")
+        BtnFrame.Size = UDim2.new(1, 0, 0, 44)
+        BtnFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        BtnFrame.LayoutOrder = tabObj.ButtonCount
+        BtnFrame.Parent = tabObj.Content
+        Instance.new("UICorner", BtnFrame).CornerRadius = UDim.new(0, 8)
+
+        local Stroke = Instance.new("UIStroke")
+        Stroke.Color = Color3.fromRGB(224, 224, 229)
+        Stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+        Stroke.Thickness = 1.2
+        Stroke.Parent = BtnFrame
+
+        -- Colored left accent bar
+        local AccentBar = Instance.new("Frame")
+        AccentBar.Size = UDim2.new(0, 4, 0, 26)
+        AccentBar.Position = UDim2.new(0, 8, 0.5, -13)
+        AccentBar.BackgroundColor3 = accentColor
+        AccentBar.BorderSizePixel = 0
+        AccentBar.Parent = BtnFrame
+        Instance.new("UICorner", AccentBar).CornerRadius = UDim.new(1, 0)
+
+        -- Subtle glow behind accent bar (same color, very transparent)
+        local AccentGlow = Instance.new("Frame")
+        AccentGlow.Size = UDim2.new(0, 18, 0, 36)
+        AccentGlow.Position = UDim2.new(0, 2, 0.5, -18)
+        AccentGlow.BackgroundColor3 = accentColor
+        AccentGlow.BackgroundTransparency = 0.85
+        AccentGlow.BorderSizePixel = 0
+        AccentGlow.ZIndex = 0
+        AccentGlow.Parent = BtnFrame
+        Instance.new("UICorner", AccentGlow).CornerRadius = UDim.new(1, 0)
+
+        -- Main clickable button (text)
+        local MainBtn = Instance.new("TextButton")
+        MainBtn.Size = UDim2.new(1, -50, 1, 0)
+        MainBtn.Position = UDim2.new(0, 20, 0, 0)
+        MainBtn.BackgroundTransparency = 1
+        MainBtn.Text = ButtonName
+        MainBtn.Font = Enum.Font.GothamSemibold
+        MainBtn.TextSize = 13
+        MainBtn.TextColor3 = Color3.fromRGB(35, 35, 35)
+        MainBtn.TextXAlignment = Enum.TextXAlignment.Left
+        MainBtn.Parent = BtnFrame
+
+        -- Info dot (circle button, matches accent color)
+        local InfoBtn = Instance.new("TextButton")
+        InfoBtn.Size = UDim2.new(0, 28, 0, 28)
+        InfoBtn.Position = UDim2.new(1, -36, 0.5, -14)
+        InfoBtn.BackgroundColor3 = accentColor
+        InfoBtn.BackgroundTransparency = 0.82
+        InfoBtn.Text = "i"
+        InfoBtn.Font = Enum.Font.GothamBlack
+        InfoBtn.TextSize = 11
+        InfoBtn.TextColor3 = accentColor
+        InfoBtn.Parent = BtnFrame
+        Instance.new("UICorner", InfoBtn).CornerRadius = UDim.new(1, 0)
+
+        -- Hover effects
+        BtnFrame.MouseEnter:Connect(function()
+            TweenService:Create(BtnFrame, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(248, 248, 252)}):Play()
+            TweenService:Create(Stroke, TweenInfo.new(0.15), {Color = Color3.fromRGB(195, 195, 205)}):Play()
+            TweenService:Create(InfoBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.65}):Play()
+        end)
+        BtnFrame.MouseLeave:Connect(function()
+            TweenService:Create(BtnFrame, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(255, 255, 255)}):Play()
+            TweenService:Create(Stroke, TweenInfo.new(0.15), {Color = Color3.fromRGB(224, 224, 229)}):Play()
+            TweenService:Create(InfoBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.82}):Play()
+        end)
+
+        -- Click: brief accent flash on the bar
+        MainBtn.MouseButton1Click:Connect(function()
+            TweenService:Create(AccentBar, TweenInfo.new(0.08), {Size = UDim2.new(0, 4, 0, 34)}):Play()
+            task.delay(0.08, function()
+                TweenService:Create(AccentBar, TweenInfo.new(0.12), {Size = UDim2.new(0, 4, 0, 26)}):Play()
+            end)
+            pcall(Callback)
+        end)
+
+        -- Info button shows modal with matching accent color
+        InfoBtn.MouseButton1Click:Connect(function()
+            self:ShowInfo(InfoText or "Tidak ada deskripsi.", accentColor)
+        end)
+    end
+
+    -- ==========================================
+    -- TAB GENERATOR (built-in utility tab)
+    -- ==========================================
+    CreateTabLogic("Generator", true)
+    local GenTab = Window.Tabs["Generator"].Content
+
+    local function CreateInput(parent, placeholder, layoutOrder)
+        local box = Instance.new("TextBox")
+        box.Size = UDim2.new(1, 0, 0, 36)
+        box.BackgroundColor3 = Color3.fromRGB(245, 245, 250)
+        box.PlaceholderText = placeholder
+        box.Text = ""
+        box.Font = Enum.Font.GothamMedium
+        box.TextSize = 12
+        box.TextColor3 = Color3.fromRGB(20, 20, 20)
+        box.LayoutOrder = layoutOrder or 0
+        box.Parent = parent
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
+        local s = Instance.new("UIStroke", box)
+        s.Color = Color3.fromRGB(218, 218, 223)
+        box.Focused:Connect(function() Window.IsBinding = false end)
+        return box
+    end
+
+    local InpTab     = CreateInput(GenTab, "Tab name  (e.g. Main)",       1)
+    local InpSection = CreateInput(GenTab, "Section   (e.g. Farming) — optional", 2)
+    local InpName    = CreateInput(GenTab, "Button name  (e.g. Auto Farm)",  3)
+    local InpInfo    = CreateInput(GenTab, "Info text",                    4)
+    local InpColorR  = CreateInput(GenTab, "R  (0-255)",                   5)
+    local InpColorG  = CreateInput(GenTab, "G  (0-255)",                   6)
+    local InpColorB  = CreateInput(GenTab, "B  (0-255)",                   7)
+
+    local GenBtnFrame = Instance.new("Frame")
+    GenBtnFrame.Size = UDim2.new(1, 0, 0, 40)
+    GenBtnFrame.BackgroundColor3 = Color3.fromRGB(40, 120, 255)
+    GenBtnFrame.LayoutOrder = 8
+    GenBtnFrame.Parent = GenTab
+    Instance.new("UICorner", GenBtnFrame).CornerRadius = UDim.new(0, 8)
+
+    local GenBtn = Instance.new("TextButton")
+    GenBtn.Size = UDim2.new(1, 0, 1, 0)
+    GenBtn.BackgroundTransparency = 1
+    GenBtn.Text = "Generate & Copy Code"
+    GenBtn.Font = Enum.Font.GothamBold
+    GenBtn.TextSize = 13
+    GenBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    GenBtn.Parent = GenBtnFrame
+
+    GenBtn.MouseButton1Click:Connect(function()
+        GenBtn.Interactable = false
+
+        local t = InpTab.Text     ~= "" and InpTab.Text     or "Main"
+        local sc = InpSection.Text ~= "" and ('"' .. InpSection.Text .. '"') or "nil"
+        local n = InpName.Text    ~= "" and InpName.Text    or "New Button"
+        local i = InpInfo.Text    ~= "" and InpInfo.Text    or "No description."
+        local r = tonumber(InpColorR.Text) or 40
+        local g = tonumber(InpColorG.Text) or 120
+        local b = tonumber(InpColorB.Text) or 255
+
+        -- Also generate AddSection call if a section was provided
+        local sectionLine = ""
+        if sc ~= "nil" then
+            sectionLine = string.format('UI:AddSection("%s", %s)\n', t, sc)
+        end
+
+        local code = sectionLine .. string.format(
+            'UI:AddButton("%s", %s, "%s", {%d, %d, %d}, "%s", function()\n    print("%s clicked!")\nend)',
+            t, sc, n, r, g, b, i, n
+        )
+
+        copyToClipboard(code)
+        GenBtn.Text = "Copied!"
+        task.delay(1.5, function()
+            GenBtn.Text = "Generate & Copy Code"
+            GenBtn.Interactable = true
+        end)
+    end)
+
+    -- ==========================================
+    -- SETTINGS TAB
+    -- ==========================================
+    CreateTabLogic("Settings", true)
+    local SettingsTab = Window.Tabs["Settings"].Content
+
+    local function SLabel(txt, order)
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, 0, 0, 26)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = txt
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextSize = 13
+        lbl.TextColor3 = Color3.fromRGB(38, 38, 38)
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.LayoutOrder = order
+        lbl.Parent = SettingsTab
+        return lbl
+    end
+
+    SLabel("Toggle Hotkey (PC)", 1)
+
+    KeybindBtn_ref = Instance.new("TextButton")
+    KeybindBtn_ref.Size = UDim2.new(1, 0, 0, 38)
+    KeybindBtn_ref.BackgroundColor3 = Color3.fromRGB(240, 240, 245)
+    KeybindBtn_ref.Text = "Key: " .. Window.ToggleKey.Name
+    KeybindBtn_ref.Font = Enum.Font.GothamBold
+    KeybindBtn_ref.TextSize = 13
+    KeybindBtn_ref.TextColor3 = Color3.fromRGB(40, 120, 255)
+    KeybindBtn_ref.LayoutOrder = 2
+    KeybindBtn_ref.Parent = SettingsTab
+    Instance.new("UICorner", KeybindBtn_ref).CornerRadius = UDim.new(0, 7)
+    Instance.new("UIStroke", KeybindBtn_ref).Color = Color3.fromRGB(218, 218, 223)
+
+    KeybindBtn_ref.MouseButton1Click:Connect(function()
+        if not Window.IsMobile then
+            Window.IsBinding = true
+            KeybindBtn_ref.Text = "Press any key..."
+        end
+    end)
+
+    SLabel("UI Scale", 3)
+
+    local ScaleRow = Instance.new("Frame")
+    ScaleRow.Size = UDim2.new(1, 0, 0, 38)
+    ScaleRow.BackgroundTransparency = 1
+    ScaleRow.LayoutOrder = 4
+    ScaleRow.Parent = SettingsTab
+
+    local function ScaleBtn(txt, xpos)
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(0, 38, 0, 38)
+        b.Position = UDim2.new(0, xpos, 0, 0)
+        b.BackgroundColor3 = Color3.fromRGB(240, 240, 245)
+        b.Text = txt
+        b.Font = Enum.Font.GothamBlack
+        b.TextSize = 20
+        b.TextColor3 = Color3.fromRGB(55, 55, 55)
+        b.Parent = ScaleRow
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
+        return b
+    end
+
+    local BtnMinus = ScaleBtn("-", 0)
+    local BtnPlus  = ScaleBtn("+", 154)
+
+    local ScaleDisplay = Instance.new("TextLabel")
+    ScaleDisplay.Size = UDim2.new(0, 108, 0, 38)
+    ScaleDisplay.Position = UDim2.new(0, 44, 0, 0)
+    ScaleDisplay.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    ScaleDisplay.Text = tostring(math.round(UIScale.Scale * 100)) .. "%"
+    ScaleDisplay.Font = Enum.Font.GothamBold
+    ScaleDisplay.TextSize = 13
+    ScaleDisplay.TextColor3 = Color3.fromRGB(35, 35, 35)
+    ScaleDisplay.Parent = ScaleRow
+    Instance.new("UICorner", ScaleDisplay).CornerRadius = UDim.new(0, 7)
+    Instance.new("UIStroke", ScaleDisplay).Color = Color3.fromRGB(218, 218, 223)
+
+    local function updateScale(delta)
+        local s = math.clamp(math.round((UIScale.Scale + delta) * 10) / 10, 0.5, 2.0)
+        UIScale.Scale = s
+        ScaleDisplay.Text = tostring(math.round(s * 100)) .. "%"
+    end
+    BtnMinus.MouseButton1Click:Connect(function() updateScale(-0.1) end)
+    BtnPlus.MouseButton1Click:Connect(function()  updateScale( 0.1) end)
+
+    -- Mobile adjustments
+    if Window.IsMobile then
+        KeybindBtn_ref.Text = "Not available on mobile"
+        KeybindBtn_ref.Active = false
+        KeybindBtn_ref.BackgroundColor3 = Color3.fromRGB(228, 228, 228)
+        KeybindBtn_ref.TextColor3 = Color3.fromRGB(155, 155, 155)
+    end
+
+    if not Window.CurrentTab then Window:SelectTab("Generator") end
+    return Window
+end
+
+return UILibrary
